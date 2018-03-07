@@ -4,6 +4,7 @@ import requests
 
 
 URL = 'https://restaurants.applebees.com/'
+OUTPUT = 'locations.json'
 
 
 def parse_home_page(url):
@@ -28,18 +29,37 @@ def parse_state_page(url):
 
 def parse_city_page(url):
     page = requests.get(url)
-    strainer = SoupStrainer('ul', class_='itemlist')
+    strainer = SoupStrainer('span', itemprop='streetAddress')
     soup = BeautifulSoup(page.content, 'html.parser', parse_only=strainer)
-    return [{
-        'address': location.find('span', attrs={'itemprop': 'streetAddress'}).a.get_text(),
-        'city': location.find('span', attrs={'itemprop': 'addressLocality'}).get_text(),
-        'country': location.find('span', attrs={'itemprop': 'addressCountry'}).get_text(),
-        'name': location.find('li', attrs={'itemprop': 'name'}).get_text(),
-        'phone_number': location.find('span', attrs={'itemprop': 'telephone'}).get_text(),
-        'state': location.find('span', attrs={'itemprop': 'addressRegion'}).get_text(),
-        'url': location.contents[-2].a['href'],
-        'zip_code': location.find('span', attrs={'itemprop': 'postalCode'}).get_text(),
-    } for location in soup.find_all('ul')]
+    locations = []
+    for link in soup.find_all('a'):
+        locations.append(parse_restaurant_page(link['href']))
+    return locations
 
 
-print(json.dumps(parse_home_page(URL)))
+def parse_restaurant_page(url):
+    page = requests.get(url)
+    strainer = SoupStrainer('script', type='application/ld+json')
+    soup = BeautifulSoup(page.content, 'html.parser', parse_only=strainer)
+
+    # Sanitize and parse JSON data stored in script tag.
+    data = soup.find_all('script')[1].string
+    data = data.replace('// if the location file does not have the hours separated into open/close for each day, remove the below section', '')
+    data = json.loads(data)
+
+    return {
+        'address': data['address']['streetAddress'],
+        'city': data['address']['addressLocality'],
+        'country': data['address']['addressCountry'],
+        'id': data['@id'],
+        'latitude': data['geo']['latitude'],
+        'longitude': data['geo']['longitude'],
+        'name': data['branchOf']['name'],
+        'phone_number': data['telephone'],
+        'state': data['address']['addressRegion'],
+        'zip_code': data['address']['postalCode'],
+    }
+
+
+with open(OUTPUT, 'w') as f:
+    f.write(json.dumps(parse_home_page(URL)))
